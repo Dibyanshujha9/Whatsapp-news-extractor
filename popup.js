@@ -1,6 +1,7 @@
 document.addEventListener("DOMContentLoaded", () => {
   const extractBtn = document.getElementById("extract");
-  const downloadBtn = document.getElementById("download");
+  const downloadJsonBtn = document.getElementById("downloadJson");
+  const downloadExcelBtn = document.getElementById("downloadExcel");
   const output = document.getElementById("output");
   let latestData = [];
 
@@ -109,7 +110,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Download JSON button
-  downloadBtn.addEventListener("click", () => {
+  downloadJsonBtn.addEventListener("click", () => {
     if (!latestData || latestData.length === 0) {
       output.textContent = "No data to download.";
       return;
@@ -124,5 +125,27 @@ document.addEventListener("DOMContentLoaded", () => {
     a.download = "headlines.json";
     a.click();
     URL.revokeObjectURL(url);
+  });
+
+  // Download Excel button
+  downloadExcelBtn.addEventListener("click", () => {
+    if (!latestData || latestData.length === 0) {
+      output.textContent = "No data to download.";
+      return;
+    }
+
+    // Convert data to worksheet format
+    const worksheetData = [["S.No.", "Headline"]];
+    latestData.forEach((headline, index) => {
+      worksheetData.push([index + 1, headline]);
+    });
+
+    // Create workbook and worksheet
+    const ws = XLSX.utils.aoa_to_sheet(worksheetData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Headlines");
+
+    // Export to Excel file
+    XLSX.writeFile(wb, "headlines.xlsx");
   });
 });
