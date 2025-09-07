@@ -3,7 +3,7 @@
   "name": "WhatsApp News Extractor",
   "version": "1.0",
   "description": "Extract top 30 headlines from WhatsApp Web Aaj Tak Channel",
-  "permissions": ["scripting", "activeTab", "tabs"],
+  "permissions": ["scripting", "activeTab", "tabs", "storage"],
   "host_permissions": ["https://web.whatsapp.com/*"],
   "action": {
     "default_popup": "popup.html"
