@@ -1,39 +1,215 @@
 document.addEventListener("DOMContentLoaded", () => {
-  const extractBtn = document.getElementById("extract");
-  const downloadJsonBtn = document.getElementById("downloadJson");
-  const downloadExcelBtn = document.getElementById("downloadExcel");
-  const startAutoExtractBtn = document.getElementById("startAutoExtract");
-  const stopAutoExtractBtn = document.getElementById("stopAutoExtract");
-  const clearDataBtn = document.getElementById("clearData");
-  const intervalInput = document.getElementById("interval");
-  const statusDiv = document.getElementById("status");
-  const dataCountDiv = document.getElementById("dataCount");
-  const liveUpdatesDiv = document.getElementById("liveUpdates");
-  const messageTrackingDiv = document.getElementById("messageTracking");
-  const output = document.getElementById("output");
-  let latestData = [];
-  let autoExtractInterval = null;
-  let isAutoExtracting = false;
+  // DOM Elements
+  const tabs = document.querySelectorAll('.tab');
+  const tabContents = document.querySelectorAll('.tab-content');
+  const channelList = document.getElementById('channelList');
+  const liveUpdatesDiv = document.getElementById('liveUpdates');
+  const messageTrackingDiv = document.getElementById('messageTracking');
+  const downloadJsonBtn = document.getElementById('downloadJson');
+  const downloadExcelBtn = document.getElementById('downloadExcel');
+  const saveChannelBtn = document.getElementById('saveChannel');
+  const channelNameInput = document.getElementById('channelName');
+  const channelUrlInput = document.getElementById('channelUrl');
+  const channelIntervalInput = document.getElementById('channelInterval');
+  const channelMessageDiv = document.getElementById('channelMessage');
+  const output = document.getElementById('output');
+  
+  // State variables
+  let channels = [];
   let trackedMessages = []; // Array to store all tracked messages with timestamps
+  let activeTabId = null;
 
-  // Extract headlines button
-  extractBtn.addEventListener("click", () => {
-    output.textContent = "Extracting headlines...";
-    
+  // Initialize the extension
+  initializeExtension();
+
+  // Tab switching functionality
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const tabName = tab.getAttribute('data-tab');
+      
+      // Update active tab
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      
+      // Show active content
+      tabContents.forEach(content => {
+        content.classList.remove('active');
+        if (content.id === `${tabName}-tab`) {
+          content.classList.add('active');
+        }
+      });
+    });
+  });
+
+  // Initialize extension
+  function initializeExtension() {
+    // Get the active tab first
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (chrome.runtime.lastError) {
-        output.textContent = "Error querying tabs: " + chrome.runtime.lastError.message;
+      if (chrome.runtime.lastError || !tabs || !tabs[0]) {
+        channelList.innerHTML = '<div class="error">Error: Could not get active tab</div>';
         return;
       }
       
-      if (!tabs || !tabs[0]) {
-        output.textContent = "Error: No active tab found.";
+      activeTabId = tabs[0].id;
+      
+      // Request channels from background script
+      chrome.runtime.sendMessage(
+        { type: "INITIALIZE_CHANNELS" },
+        (response) => {
+          if (response && response.success) {
+            channels = response.channels;
+            renderChannelList();
+          } else {
+            addLiveUpdate("Error: Failed to initialize channels");
+            channelList.innerHTML = '<div class="error">Failed to load channels</div>';
+          }
+        }
+      );
+    });
+  }
+
+  // Render channel list
+  function renderChannelList() {
+    if (channels.length === 0) {
+      channelList.innerHTML = '<div class="channel-item"><p>No channels configured. Add a channel to get started.</p></div>';
+      return;
+    }
+
+    channelList.innerHTML = '';
+    
+    channels.forEach(channel => {
+      const channelElement = document.createElement('div');
+      channelElement.className = 'channel-item';
+      channelElement.innerHTML = `
+        <div class="channel-header">
+          <div class="channel-name">${channel.name}</div>
+          <div class="channel-status ${channel.isActive ? 'status-active' : 'status-inactive'}">
+            ${channel.isActive ? 'Active' : 'Inactive'}
+          </div>
+        </div>
+        <div class="channel-data-info">
+          Interval: ${channel.interval} min | 
+          Messages: <span id="count-${channel.id}">Loading...</span> |
+          Last extraction: ${channel.lastExtraction ? new Date(channel.lastExtraction).toLocaleTimeString() : 'Never'}
+        </div>
+        <div class="channel-controls">
+          ${channel.isActive 
+            ? `<button class="stop-extraction" data-id="${channel.id}">Stop Extraction</button>`
+            : `<button class="start-extraction" data-id="${channel.id}">Start Extraction</button>`
+          }
+          <button class="extract-now" data-id="${channel.id}">Extract Now</button>
+          <button class="clear-data" data-id="${channel.id}">Clear Data</button>
+          <button class="download-channel" data-id="${channel.id}">Download</button>
+          <button class="remove-channel danger" data-id="${channel.id}">Remove</button>
+        </div>
+      `;
+      
+      channelList.appendChild(channelElement);
+      
+      // Get data count for this channel
+      getChannelDataCount(channel.id);
+    });
+    
+    // Add event listeners to buttons
+    document.querySelectorAll('.start-extraction').forEach(button => {
+      button.addEventListener('click', () => {
+        startChannelExtraction(button.getAttribute('data-id'));
+      });
+    });
+    
+    document.querySelectorAll('.stop-extraction').forEach(button => {
+      button.addEventListener('click', () => {
+        stopChannelExtraction(button.getAttribute('data-id'));
+      });
+    });
+    
+    document.querySelectorAll('.extract-now').forEach(button => {
+      button.addEventListener('click', () => {
+        extractChannelNow(button.getAttribute('data-id'));
+      });
+    });
+    
+    document.querySelectorAll('.clear-data').forEach(button => {
+      button.addEventListener('click', () => {
+        clearChannelData(button.getAttribute('data-id'));
+      });
+    });
+    
+    document.querySelectorAll('.download-channel').forEach(button => {
+      button.addEventListener('click', () => {
+        downloadChannelData(button.getAttribute('data-id'));
+      });
+    });
+    
+    document.querySelectorAll('.remove-channel').forEach(button => {
+      button.addEventListener('click', () => {
+        removeChannel(button.getAttribute('data-id'));
+      });
+    });
+  }
+
+  // Get data count for a channel
+  function getChannelDataCount(channelId) {
+    chrome.runtime.sendMessage(
+      { type: "GET_CHANNEL_DATA", channelId: channelId },
+      (response) => {
+        const countElement = document.getElementById(`count-${channelId}`);
+        if (response && response.success) {
+          if (countElement) {
+            countElement.textContent = response.data.length;
+          }
+        } else {
+          if (countElement) {
+            countElement.textContent = 'Error';
+          }
+        }
+      }
+    );
+  }
+
+  // Start channel extraction
+  function startChannelExtraction(channelId) {
+    chrome.runtime.sendMessage(
+      { type: "START_EXTRACTION", channelId: channelId },
+      (response) => {
+        if (response && response.success) {
+          addLiveUpdate(`Started extraction for channel ${getChannelName(channelId)}`);
+          refreshChannels();
+        } else {
+          addLiveUpdate(`Error starting extraction: ${response ? response.error : 'Unknown error'}`);
+        }
+      }
+    );
+  }
+
+  // Stop channel extraction
+  function stopChannelExtraction(channelId) {
+    chrome.runtime.sendMessage(
+      { type: "STOP_EXTRACTION", channelId: channelId },
+      (response) => {
+        if (response && response.success) {
+          addLiveUpdate(`Stopped extraction for channel ${getChannelName(channelId)}`);
+          refreshChannels();
+        } else {
+          addLiveUpdate(`Error stopping extraction: ${response ? response.error : 'Unknown error'}`);
+        }
+      }
+    );
+  }
+
+  // Extract channel now
+  function extractChannelNow(channelId) {
+    addLiveUpdate(`Manual extraction started for channel ${getChannelName(channelId)}`);
+    
+    // Check if we're on WhatsApp Web
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (chrome.runtime.lastError || !tabs || !tabs[0]) {
+        addLiveUpdate("Error: Could not query active tab");
         return;
       }
 
-      // Check if we're on WhatsApp Web
       if (!tabs[0].url.includes("web.whatsapp.com")) {
-        output.textContent = "Error: Please navigate to WhatsApp Web (https://web.whatsapp.com) and select the Aaj Tak channel.";
+        addLiveUpdate("Error: Not on WhatsApp Web. Please navigate to https://web.whatsapp.com");
         return;
       }
 
@@ -49,17 +225,17 @@ document.addEventListener("DOMContentLoaded", () => {
             console.log("Content script not responding, attempting to inject...");
             injectContentScript(tabId, () => {
               // After injection, try to extract headlines
-              extractHeadlinesFromTab(tabId);
+              performExtractionForTab(tabId, channelId);
             });
           } else {
             // Content script is alive, proceed with extraction
             console.log("Content script is alive, proceeding with extraction...");
-            extractHeadlinesFromTab(tabId);
+            performExtractionForTab(tabId, channelId);
           }
         }
       );
     });
-  });
+  }
 
   // Function to inject content script explicitly
   function injectContentScript(tabId, callback) {
@@ -70,7 +246,7 @@ document.addEventListener("DOMContentLoaded", () => {
       },
       () => {
         if (chrome.runtime.lastError) {
-          output.textContent = "Failed to inject content script: " + chrome.runtime.lastError.message;
+          addLiveUpdate("Failed to inject content script: " + chrome.runtime.lastError.message);
           return;
         }
         console.log("Content script injected successfully");
@@ -80,282 +256,286 @@ document.addEventListener("DOMContentLoaded", () => {
     );
   }
 
-  // Function to extract headlines from a tab
-  function extractHeadlinesFromTab(tabId) {
+  // Perform extraction for a specific tab and channel
+  function performExtractionForTab(tabId, channelId) {
+    // Get channel info from content script
     chrome.tabs.sendMessage(
       tabId,
-      { action: "extractHeadlines" },
+      { action: "getChannelInfo" },
       (response) => {
-        if (chrome.runtime.lastError) {
-          output.textContent =
-            "Error: Could not connect to WhatsApp Web.\n\n" +
-            "Please ensure:\n" +
-            "1. You are on https://web.whatsapp.com\n" +
-            "2. The extension is properly loaded\n" +
-            "3. You've selected the Aaj Tak channel\n" +
-            "4. The content script is loaded (try refreshing the page)\n\n" +
-            "Technical details: " + chrome.runtime.lastError.message;
-          console.error("Runtime error:", chrome.runtime.lastError);
+        if (chrome.runtime.lastError || !response || response.error) {
+          addLiveUpdate(`Error getting channel info: ${chrome.runtime.lastError?.message || response?.error || "Unknown error"}`);
           return;
         }
 
-        if (!response) {
-          output.textContent = "No response from content script. Please try refreshing WhatsApp Web.";
-          return;
-        }
-
-        if (response.error) {
-          output.textContent = "Error extracting headlines: " + response.error;
-          return;
-        }
-
-        if (!response.headlines || response.headlines.length === 0) {
-          output.textContent = "No headlines found. Try:\n1. Refreshing WhatsApp Web\n2. Ensuring you're in the Aaj Tak channel\n3. Scrolling down to load messages";
-          return;
-        }
-
-        latestData = response.headlines;
-        output.textContent = JSON.stringify(latestData, null, 2);
+        const currentChannelName = response.channelName;
+        const targetChannel = channels.find(c => c.id === channelId);
         
-        // Store the extracted data in background
-        storeData(latestData);
+        if (!targetChannel) {
+          addLiveUpdate("Error: Target channel not found");
+          return;
+        }
+        
+        addLiveUpdate(`Current channel: ${currentChannelName}, Target channel: ${targetChannel.name}`);
+        
+        // Extract headlines from tab
+        chrome.tabs.sendMessage(
+          tabId,
+          { action: "extractHeadlines" },
+          (response) => {
+            if (chrome.runtime.lastError || !response || response.error) {
+              addLiveUpdate(`Error: ${chrome.runtime.lastError?.message || response?.error || "Unknown error"}`);
+              return;
+            }
+
+            if (response.headlines && response.headlines.length > 0) {
+              // Store the extracted data
+              storeChannelData(channelId, response.headlines);
+              addLiveUpdate(`Extracted ${response.headlines.length} headlines from ${response.channelName || targetChannel.name}`);
+              
+              // Track all extracted messages
+              const cycleStartTime = new Date();
+              response.headlines.forEach((headline) => {
+                trackedMessages.push({
+                  type: 'message',
+                  timestamp: new Date(),
+                  content: headline,
+                  channelId: channelId,
+                  channelName: targetChannel.name,
+                  cycleStartTime: cycleStartTime
+                });
+              });
+              
+              // Update message tracking display
+              updateMessageTracking();
+              
+              // Update data count
+              getChannelDataCount(channelId);
+            } else {
+              addLiveUpdate(`No headlines found in ${targetChannel.name}`);
+              
+              // Track that no messages were found
+              trackedMessages.push({
+                type: 'no_messages',
+                timestamp: new Date(),
+                channelId: channelId,
+                channelName: targetChannel.name
+              });
+              updateMessageTracking();
+            }
+          }
+        );
       }
     );
   }
 
-  // Function to store data in background
-  function storeData(data) {
+  // Store channel data
+  function storeChannelData(channelId, data) {
     chrome.runtime.sendMessage(
-      { type: "STORE_DATA", data: data },
+      { type: "STORE_CHANNEL_DATA", channelId: channelId, data: data },
       (response) => {
         if (response && response.success) {
-          console.log(`Stored ${data.length} headlines`);
-          updateDataCount();
+          console.log(`Stored ${data.length} headlines for channel ${channelId}`);
         } else {
-          console.error("Failed to store data:", response ? response.error : "Unknown error");
+          console.error("Failed to store channel data:", response ? response.error : "Unknown error");
         }
       }
     );
   }
+
+  // Clear channel data
+  function clearChannelData(channelId) {
+    chrome.runtime.sendMessage(
+      { type: "CLEAR_CHANNEL_DATA", channelId: channelId },
+      (response) => {
+        if (response && response.success) {
+          addLiveUpdate(`Cleared data for channel ${getChannelName(channelId)}`);
+          getChannelDataCount(channelId);
+          
+          // Remove tracked messages for this channel
+          trackedMessages = trackedMessages.filter(msg => msg.channelId !== channelId);
+          updateMessageTracking();
+        } else {
+          addLiveUpdate(`Error clearing data: ${response ? response.error : 'Unknown error'}`);
+        }
+      }
+    );
+  }
+
+  // Download channel data
+  function downloadChannelData(channelId) {
+    chrome.runtime.sendMessage(
+      { type: "DOWNLOAD_CHANNEL_DATA", channelId: channelId },
+      (response) => {
+        if (response && response.success) {
+          const data = response.data;
+          const channelName = getChannelName(channelId);
+          
+          // Convert data to worksheet format
+          const worksheetData = [["S.No.", "Headline"]];
+          data.forEach((headline, index) => {
+            worksheetData.push([index + 1, headline]);
+          });
+
+          // Create workbook and worksheet
+          const ws = XLSX.utils.aoa_to_sheet(worksheetData);
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, channelName);
+
+          // Export to Excel file
+          XLSX.writeFile(wb, `${channelName}_headlines.xlsx`);
+          addLiveUpdate(`Downloaded data for channel ${channelName}`);
+        } else {
+          addLiveUpdate(`Error downloading data: ${response ? response.error : 'Unknown error'}`);
+        }
+      }
+    );
+  }
+
+  // Remove channel
+  function removeChannel(channelId) {
+    if (!confirm(`Are you sure you want to remove channel "${getChannelName(channelId)}"?`)) {
+      return;
+    }
+    
+    chrome.runtime.sendMessage(
+      { type: "REMOVE_CHANNEL", channelId: channelId },
+      (response) => {
+        if (response && response.success) {
+          addLiveUpdate(`Removed channel ${getChannelName(channelId)}`);
+          refreshChannels();
+        } else {
+          addLiveUpdate(`Error removing channel: ${response ? response.error : 'Unknown error'}`);
+        }
+      }
+    );
+  }
+
+  // Refresh channels list
+  function refreshChannels() {
+    chrome.runtime.sendMessage(
+      { type: "GET_CHANNELS" },
+      (response) => {
+        if (response && response.success) {
+          channels = response.channels;
+          renderChannelList();
+        } else {
+          addLiveUpdate("Error: Failed to refresh channels");
+        }
+      }
+    );
+  }
+
+  // Get channel name by ID
+  function getChannelName(channelId) {
+    const channel = channels.find(c => c.id === channelId);
+    return channel ? channel.name : channelId;
+  }
+
+  // Save new channel
+  saveChannelBtn.addEventListener('click', () => {
+    const name = channelNameInput.value.trim();
+    const url = channelUrlInput.value.trim() || 'https://web.whatsapp.com/';
+    const interval = parseInt(channelIntervalInput.value) || 5;
+    
+    if (!name) {
+      channelMessageDiv.innerHTML = '<div class="error">Please enter a channel name</div>';
+      return;
+    }
+    
+    if (interval < 1 || interval > 60) {
+      channelMessageDiv.innerHTML = '<div class="error">Interval must be between 1 and 60 minutes</div>';
+      return;
+    }
+    
+    const newChannel = {
+      name: name,
+      urlPattern: url,
+      interval: interval,
+      isActive: false,
+      lastExtraction: null
+    };
+    
+    chrome.runtime.sendMessage(
+      { type: "ADD_CHANNEL", channel: newChannel },
+      (response) => {
+        if (response && response.success) {
+          channelMessageDiv.innerHTML = '<div class="success">Channel added successfully</div>';
+          channelNameInput.value = '';
+          channelUrlInput.value = '';
+          channelIntervalInput.value = '5';
+          refreshChannels();
+        } else {
+          channelMessageDiv.innerHTML = `<div class="error">Error: ${response ? response.error : 'Unknown error'}</div>`;
+        }
+      }
+    );
+  });
 
   // Download JSON button
   downloadJsonBtn.addEventListener("click", () => {
-    // First, try to get accumulated data from background
     chrome.runtime.sendMessage(
-      { type: "GET_ACCUMULATED_DATA" },
+      { type: "DOWNLOAD_CHANNEL_DATA" }, // No channelId = all channels
       (response) => {
-        let dataToExport = [];
-        
-        if (response && response.success && response.data && response.data.length > 0) {
-          dataToExport = response.data;
-        } else if (latestData && latestData.length > 0) {
-          dataToExport = latestData;
+        if (response && response.success) {
+          const allData = response.data;
+          
+          // Create a combined JSON object
+          const exportData = {};
+          allData.forEach(channelData => {
+            exportData[channelData.channelName] = channelData.data;
+          });
+          
+          const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+            type: "application/json",
+          });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "all_channels_headlines.json";
+          a.click();
+          URL.revokeObjectURL(url);
+          addLiveUpdate("Downloaded all channels data as JSON");
         } else {
-          output.textContent = "No data to download.";
-          return;
+          addLiveUpdate(`Error downloading data: ${response ? response.error : 'Unknown error'}`);
         }
-
-        const blob = new Blob([JSON.stringify(dataToExport, null, 2)], {
-          type: "application/json",
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "headlines.json";
-        a.click();
-        URL.revokeObjectURL(url);
       }
     );
   });
 
   // Download Excel button
   downloadExcelBtn.addEventListener("click", () => {
-    // First, try to get accumulated data from background
     chrome.runtime.sendMessage(
-      { type: "GET_ACCUMULATED_DATA" },
+      { type: "DOWNLOAD_CHANNEL_DATA" }, // No channelId = all channels
       (response) => {
-        let dataToExport = [];
-        
-        if (response && response.success && response.data && response.data.length > 0) {
-          dataToExport = response.data;
-        } else if (latestData && latestData.length > 0) {
-          dataToExport = latestData;
+        if (response && response.success) {
+          const allData = response.data;
+          
+          // Create workbook
+          const wb = XLSX.utils.book_new();
+          
+          // Add each channel as a separate worksheet
+          allData.forEach(channelData => {
+            if (channelData.data.length > 0) {
+              const worksheetData = [["S.No.", "Headline"]];
+              channelData.data.forEach((headline, index) => {
+                worksheetData.push([index + 1, headline]);
+              });
+              
+              const ws = XLSX.utils.aoa_to_sheet(worksheetData);
+              XLSX.utils.book_append_sheet(wb, ws, channelData.channelName);
+            }
+          });
+          
+          // Export to Excel file
+          XLSX.writeFile(wb, "all_channels_headlines.xlsx");
+          addLiveUpdate("Downloaded all channels data as Excel");
         } else {
-          output.textContent = "No data to download.";
-          return;
+          addLiveUpdate(`Error downloading data: ${response ? response.error : 'Unknown error'}`);
         }
-
-        // Convert data to worksheet format
-        const worksheetData = [["S.No.", "Headline"]];
-        dataToExport.forEach((headline, index) => {
-          worksheetData.push([index + 1, headline]);
-        });
-
-        // Create workbook and worksheet
-        const ws = XLSX.utils.aoa_to_sheet(worksheetData);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Headlines");
-
-        // Export to Excel file
-        XLSX.writeFile(wb, "headlines.xlsx");
       }
     );
   });
-
-  // Start automatic extraction button
-  startAutoExtractBtn.addEventListener("click", () => {
-    if (isAutoExtracting) {
-      output.textContent = "Automatic extraction is already running.";
-      addLiveUpdate("Error: Automatic extraction is already running");
-      return;
-    }
-    
-    const interval = parseInt(intervalInput.value) || 5;
-    if (interval < 1 || interval > 60) {
-      output.textContent = "Please enter a valid interval between 1 and 60 minutes.";
-      addLiveUpdate("Error: Please enter a valid interval between 1 and 60 minutes");
-      return;
-    }
-    
-    // Start periodic extraction
-    isAutoExtracting = true;
-    const intervalMs = interval * 60 * 1000; // Convert minutes to milliseconds
-    
-    // Add live update
-    addLiveUpdate(`Starting automatic extraction with ${interval} minute intervals`);
-    
-    // Record start of extraction cycle
-    const cycleStartTime = new Date();
-    trackedMessages.push({
-      type: 'cycle_start',
-      timestamp: cycleStartTime,
-      interval: interval
-    });
-    updateMessageTracking();
-    
-    // Do an initial extraction
-    performAutoExtraction(cycleStartTime);
-    
-    // Set up interval for periodic extraction
-    autoExtractInterval = setInterval(() => {
-      const cycleStartTime = new Date();
-      trackedMessages.push({
-        type: 'cycle_start',
-        timestamp: cycleStartTime,
-        interval: interval
-      });
-      updateMessageTracking();
-      performAutoExtraction(cycleStartTime);
-    }, intervalMs);
-    
-    output.textContent = `Automatic extraction started with ${interval} minute intervals.`;
-    updateStatus();
-  });
-
-  // Stop automatic extraction button
-  stopAutoExtractBtn.addEventListener("click", () => {
-    if (!isAutoExtracting) {
-      output.textContent = "Automatic extraction is not running.";
-      addLiveUpdate("Error: Automatic extraction is not running");
-      return;
-    }
-    
-    clearInterval(autoExtractInterval);
-    isAutoExtracting = false;
-    autoExtractInterval = null;
-    
-    output.textContent = "Automatic extraction stopped.";
-    addLiveUpdate("Automatic extraction stopped");
-    
-    // Record stop of extraction
-    trackedMessages.push({
-      type: 'cycle_stop',
-      timestamp: new Date()
-    });
-    updateMessageTracking();
-    
-    updateStatus();
-  });
-
-  // Perform automatic extraction
-  function performAutoExtraction(cycleStartTime) {
-    // Add live update that extraction is starting
-    addLiveUpdate("Starting automatic extraction...");
-    
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (chrome.runtime.lastError || !tabs || !tabs[0]) {
-        console.error("Error querying tabs for auto extraction");
-        addLiveUpdate("Error: Could not query active tab");
-        return;
-      }
-
-      // Check if we're on WhatsApp Web
-      if (!tabs[0].url.includes("web.whatsapp.com")) {
-        console.error("Not on WhatsApp Web for auto extraction");
-        addLiveUpdate("Error: Not on WhatsApp Web");
-        return;
-      }
-
-      const tabId = tabs[0].id;
-      
-      // Extract headlines from tab
-      chrome.tabs.sendMessage(
-        tabId,
-        { action: "extractHeadlines" },
-        (response) => {
-          if (chrome.runtime.lastError || !response || response.error) {
-            console.error("Error in auto extraction:", chrome.runtime.lastError?.message || response?.error);
-            addLiveUpdate("Error: " + (chrome.runtime.lastError?.message || response?.error || "Unknown error"));
-            return;
-          }
-
-          if (response.headlines && response.headlines.length > 0) {
-            // Store the extracted data
-            storeData(response.headlines);
-            console.log(`Auto extracted ${response.headlines.length} headlines`);
-            
-            // Add live update with extraction details
-            addLiveUpdate(`Extracted ${response.headlines.length} headlines`);
-            
-            // Track all extracted messages
-            response.headlines.forEach((headline, index) => {
-              trackedMessages.push({
-                type: 'message',
-                timestamp: new Date(),
-                content: headline,
-                cycleStartTime: cycleStartTime
-              });
-            });
-            
-            // Add individual headlines to live updates (first 3 for brevity)
-            const displayCount = Math.min(3, response.headlines.length);
-            for (let i = 0; i < displayCount; i++) {
-              const headline = response.headlines[i];
-              // Truncate long headlines for display
-              const truncated = headline.length > 50 ? headline.substring(0, 50) + "..." : headline;
-              addLiveUpdate(`• ${truncated}`);
-            }
-            if (response.headlines.length > 3) {
-              addLiveUpdate(`... and ${response.headlines.length - 3} more`);
-            }
-            
-            // Update message tracking display
-            updateMessageTracking();
-          } else {
-            addLiveUpdate("No headlines found in this extraction");
-            
-            // Track that no messages were found
-            trackedMessages.push({
-              type: 'no_messages',
-              timestamp: new Date(),
-              cycleStartTime: cycleStartTime
-            });
-            updateMessageTracking();
-          }
-        }
-      );
-    });
-  }
 
   // Function to add live updates to the UI
   function addLiveUpdate(message) {
@@ -392,111 +572,51 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     
-    // Group messages by extraction cycle
-    const cycles = {};
-    let currentCycleTime = null;
+    // Group messages by channel
+    const channelGroups = {};
     
     trackedMessages.forEach(item => {
-      if (item.type === 'cycle_start') {
-        currentCycleTime = item.timestamp.toISOString();
-        cycles[currentCycleTime] = {
-          startTime: item.timestamp,
-          messages: [],
-          interval: item.interval
+      const channelId = item.channelId;
+      if (!channelGroups[channelId]) {
+        channelGroups[channelId] = {
+          channelName: item.channelName,
+          messages: []
         };
-      } else if (item.type === 'message' && currentCycleTime) {
-        cycles[currentCycleTime].messages.push(item);
-      } else if (item.type === 'no_messages' && currentCycleTime) {
-        cycles[currentCycleTime].noMessages = true;
-      } else if (item.type === 'cycle_stop') {
-        currentCycleTime = null;
       }
-    });
-    
-    // Display cycles in reverse order (newest first)
-    const cycleTimes = Object.keys(cycles).sort().reverse();
-    
-    if (cycleTimes.length === 0) {
-      messageTrackingDiv.textContent = 'No extraction cycles yet...';
-      return;
-    }
-    
-    cycleTimes.forEach(cycleTime => {
-      const cycle = cycles[cycleTime];
-      const cycleTimeStr = cycle.startTime.toLocaleTimeString();
       
-      // Add cycle header
-      const cycleHeader = document.createElement("div");
-      cycleHeader.className = "extraction-cycle";
-      cycleHeader.textContent = `Cycle ${cycleTimeStr} (${cycle.messages.length} messages)`;
-      messageTrackingDiv.appendChild(cycleHeader);
-      
-      // Add messages
-      if (cycle.noMessages && cycle.messages.length === 0) {
-        const noMessagesDiv = document.createElement("div");
-        noMessagesDiv.className = "tracked-message";
-        noMessagesDiv.textContent = "No messages found";
-        messageTrackingDiv.appendChild(noMessagesDiv);
-      } else {
-        cycle.messages.forEach(msg => {
-          const msgTimeStr = msg.timestamp.toLocaleTimeString();
-          const truncatedContent = msg.content.length > 60 ? msg.content.substring(0, 60) + "..." : msg.content;
-          
-          const msgDiv = document.createElement("div");
-          msgDiv.className = "tracked-message";
-          msgDiv.textContent = `[${msgTimeStr}] ${truncatedContent}`;
-          messageTrackingDiv.appendChild(msgDiv);
+      if (item.type === 'message') {
+        channelGroups[channelId].messages.push(item);
+      } else if (item.type === 'no_messages') {
+        channelGroups[channelId].messages.push({
+          timestamp: item.timestamp,
+          content: "No messages found in this extraction",
+          isNoMessages: true
         });
       }
     });
+    
+    // Display channels
+    Object.keys(channelGroups).forEach(channelId => {
+      const group = channelGroups[channelId];
+      
+      // Add channel header
+      const channelHeader = document.createElement("div");
+      channelHeader.className = "extraction-cycle";
+      channelHeader.textContent = `${group.channelName} (${group.messages.length} messages)`;
+      messageTrackingDiv.appendChild(channelHeader);
+      
+      // Add messages (show last 10 for each channel)
+      const messagesToShow = group.messages.slice(-10);
+      messagesToShow.forEach(msg => {
+        const msgTimeStr = msg.timestamp.toLocaleTimeString();
+        const content = msg.isNoMessages ? msg.content : 
+          (msg.content.length > 60 ? msg.content.substring(0, 60) + "..." : msg.content);
+        
+        const msgDiv = document.createElement("div");
+        msgDiv.className = "tracked-message";
+        msgDiv.textContent = `[${msgTimeStr}] ${content}`;
+        messageTrackingDiv.appendChild(msgDiv);
+      });
+    });
   }
-
-  // Clear data button
-  clearDataBtn.addEventListener("click", () => {
-    chrome.runtime.sendMessage(
-      { type: "CLEAR_ACCUMULATED_DATA" },
-      (response) => {
-        if (response && response.success) {
-          output.textContent = "Data cleared successfully.";
-          updateDataCount();
-          addLiveUpdate("Data cleared successfully");
-          
-          // Clear tracked messages
-          trackedMessages = [];
-          updateMessageTracking();
-          addLiveUpdate("Message tracking cleared");
-        } else {
-          output.textContent = "Failed to clear data.";
-          addLiveUpdate("Error: Failed to clear data");
-        }
-      }
-    );
-  });
-
-  // Update status display
-  function updateStatus() {
-    if (isAutoExtracting) {
-      statusDiv.textContent = "Status: Running";
-      statusDiv.className = "status running";
-    } else {
-      statusDiv.textContent = "Status: Stopped";
-      statusDiv.className = "status stopped";
-    }
-    updateDataCount();
-  }
-
-  // Update data count display
-  function updateDataCount() {
-    chrome.runtime.sendMessage(
-      { type: "GET_DATA_COUNT" },
-      (response) => {
-        if (response && response.success) {
-          dataCountDiv.textContent = `Data count: ${response.count}`;
-        }
-      }
-    );
-  }
-
-  // Initialize status on popup open
-  updateStatus();
 });

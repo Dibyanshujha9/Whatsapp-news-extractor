@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "WhatsApp News Extractor",
-  "version": "1.0",
-  "description": "Extract top 30 headlines from WhatsApp Web Aaj Tak Channel",
+  "version": "1.1",
+  "description": "Extract headlines from multiple WhatsApp Web channels",
   "permissions": ["scripting", "activeTab", "tabs", "storage"],
   "host_permissions": ["https://web.whatsapp.com/*"],
   "action": {

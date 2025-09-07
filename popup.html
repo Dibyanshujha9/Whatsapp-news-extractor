@@ -1,31 +1,149 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>Extract Headlines</title>
+    <title>WhatsApp News Extractor</title>
     <style>
-      body { font-family: Arial, sans-serif; padding: 10px; width: 300px; }
-      button { padding: 8px 12px; margin-bottom: 10px; cursor: pointer; }
-      pre { white-space: pre-wrap; word-wrap: break-word; font-size: 12px; }
-      .auto-extract-controls {
-        margin-top: 15px;
-        padding-top: 10px;
-        border-top: 1px solid #ccc;
+      body { 
+        font-family: Arial, sans-serif; 
+        padding: 10px; 
+        width: 400px; 
+        margin: 0;
       }
-      .interval-control {
-        margin: 10px 0;
+      button { 
+        padding: 8px 12px; 
+        margin: 5px 0; 
+        cursor: pointer; 
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background-color: #f8f8f8;
       }
-      .status {
+      button:hover {
+        background-color: #e8e8e8;
+      }
+      button.primary {
+        background-color: #4CAF50;
+        color: white;
+        border-color: #45a049;
+      }
+      button.primary:hover {
+        background-color: #45a049;
+      }
+      button.danger {
+        background-color: #f44336;
+        color: white;
+        border-color: #d32f2f;
+      }
+      button.danger:hover {
+        background-color: #d32f2f;
+      }
+      button:disabled {
+        background-color: #cccccc;
+        cursor: not-allowed;
+      }
+      input, select {
+        padding: 6px;
+        margin: 5px 0;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        width: 100%;
+        box-sizing: border-box;
+      }
+      pre { 
+        white-space: pre-wrap; 
+        word-wrap: break-word; 
+        font-size: 12px; 
+        background-color: #f5f5f5;
+        padding: 8px;
+        border-radius: 4px;
+        max-height: 150px;
+        overflow-y: auto;
+      }
+      .section {
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 1px solid #eee;
+      }
+      .section h3 {
+        margin-top: 0;
+        color: #333;
+      }
+      .form-group {
+        margin-bottom: 10px;
+      }
+      .form-group label {
+        display: block;
+        margin-bottom: 4px;
+        font-weight: bold;
+        font-size: 12px;
+      }
+      .channel-list {
+        max-height: 300px;
+        overflow-y: auto;
+      }
+      .channel-item {
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 10px;
+        margin-bottom: 10px;
+        background-color: #fafafa;
+      }
+      .channel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .channel-name {
+        font-weight: bold;
+        font-size: 14px;
+      }
+      .channel-status {
+        font-size: 12px;
+        padding: 2px 6px;
+        border-radius: 3px;
+      }
+      .status-active {
+        background-color: #d4edda;
+        color: #155724;
+      }
+      .status-inactive {
+        background-color: #f8d7da;
+        color: #721c24;
+      }
+      .channel-controls {
+        display: flex;
+        gap: 5px;
+        flex-wrap: wrap;
+      }
+      .channel-data-info {
         font-size: 12px;
         color: #666;
         margin: 5px 0;
       }
-      .running {
-        color: green;
-        font-weight: bold;
+      .tabs {
+        display: flex;
+        margin-bottom: 15px;
+        border-bottom: 1px solid #ddd;
       }
-      .stopped {
-        color: red;
-        font-weight: bold;
+      .tab {
+        padding: 8px 16px;
+        cursor: pointer;
+        border: 1px solid transparent;
+        border-bottom: none;
+        border-radius: 4px 4px 0 0;
+        background-color: #f0f0f0;
+      }
+      .tab.active {
+        background-color: white;
+        border-color: #ddd;
+        border-bottom-color: white;
+        margin-bottom: -1px;
+      }
+      .tab-content {
+        display: none;
+      }
+      .tab-content.active {
+        display: block;
       }
       .live-updates {
         margin-top: 10px;
@@ -77,36 +195,91 @@
         margin: 5px 0 2px 0;
         color: #2e8b57;
       }
+      .hidden {
+        display: none;
+      }
+      .error {
+        color: #d32f2f;
+        font-size: 12px;
+        margin: 5px 0;
+      }
+      .success {
+        color: #388e3c;
+        font-size: 12px;
+        margin: 5px 0;
+      }
     </style>
   </head>
   <body>
-    <button id="extract">Extract Headlines</button>
-    <button id="downloadJson">Download JSON</button>
-    <button id="downloadExcel">Download Excel</button>
+    <h2>WhatsApp News Extractor</h2>
     
-    <div class="auto-extract-controls">
-      <h3>Automatic Extraction</h3>
-      <div class="interval-control">
-        <label for="interval">Interval (minutes):</label>
-        <input type="number" id="interval" min="1" max="60" value="5">
+    <div class="tabs">
+      <div class="tab active" data-tab="channels">Channels</div>
+      <div class="tab" data-tab="add-channel">Add Channel</div>
+      <div class="tab" data-tab="settings">Settings</div>
+    </div>
+    
+    <div class="tab-content active" id="channels-tab">
+      <div class="section">
+        <h3>Active Channels</h3>
+        <div id="channelList" class="channel-list">
+          <div class="channel-item">
+            <p>Loading channels...</p>
+          </div>
+        </div>
       </div>
-      <button id="startAutoExtract">Start Auto Extract</button>
-      <button id="stopAutoExtract">Stop Auto Extract</button>
-      <button id="clearData">Clear Data</button>
-      <div id="status" class="status">Status: Stopped</div>
-      <div id="dataCount" class="status">Data count: 0</div>
+      
+      <div class="section">
+        <h3>Live Updates</h3>
+        <div class="live-updates" id="liveUpdates">
+          <div class="live-update-item">Live updates will appear here...</div>
+        </div>
+      </div>
+      
+      <div class="section">
+        <h3>Extracted Messages</h3>
+        <div class="message-tracking">
+          <div class="tracking-header">Messages by Channel:</div>
+          <div id="messageTracking">No messages extracted yet...</div>
+        </div>
+      </div>
+      
+      <div class="section">
+        <h3>Export Data</h3>
+        <button id="downloadJson" class="primary">Download All as JSON</button>
+        <button id="downloadExcel" class="primary">Download All as Excel</button>
+      </div>
     </div>
     
-    <div class="live-updates" id="liveUpdates">
-      <div class="live-update-item">Live updates will appear here...</div>
+    <div class="tab-content" id="add-channel-tab">
+      <div class="section">
+        <h3>Add New Channel</h3>
+        <div class="form-group">
+          <label for="channelName">Channel Name:</label>
+          <input type="text" id="channelName" placeholder="e.g., Aaj Tak News">
+        </div>
+        <div class="form-group">
+          <label for="channelUrl">URL Pattern (Optional):</label>
+          <input type="text" id="channelUrl" placeholder="https://web.whatsapp.com/">
+        </div>
+        <div class="form-group">
+          <label for="channelInterval">Extraction Interval (minutes):</label>
+          <input type="number" id="channelInterval" min="1" max="60" value="5">
+        </div>
+        <button id="saveChannel" class="primary">Add Channel</button>
+        <div id="channelMessage"></div>
+      </div>
     </div>
     
-    <div class="message-tracking">
-      <div class="tracking-header">Extracted Messages:</div>
-      <div id="messageTracking">No messages extracted yet...</div>
+    <div class="tab-content" id="settings-tab">
+      <div class="section">
+        <h3>Extension Settings</h3>
+        <p>Multi-channel WhatsApp News Extractor</p>
+        <p>Version: 1.1</p>
+      </div>
     </div>
     
-    <pre id="output"></pre>
+    <pre id="output" class="hidden"></pre>
     <script src="xlsx.full.min.js"></script>
     <script src="popup.js"></script>
   </body>
