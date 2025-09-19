@@ -12,3 +12,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // We don't need to send a response for this message
   // sendResponse is only needed if the sender expects a response
 });
+This code helps to console the content script 
